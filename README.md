@@ -11,6 +11,7 @@ npm start
 The server embeds the font from `fonts/Numeric.ttf` (default: Jua).
 Replace the file if you want a different number style.
 If `fonts/Numeric.ttf` is missing, it falls back to `fonts/ConcertOne.ttf`.
+SVGs load character images via `/img/*.png`, so keep the `img/` folder deployed.
 
 ## Endpoints
 
