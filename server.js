@@ -302,7 +302,7 @@ function renderAffinityPanel(entry, index, fontFamily) {
     <rect x="${LAYOUT.barX}" y="${fillY}" width="${LAYOUT.barWidth}" height="${fillHeight}" fill="${theme.bar}" clip-path="url(#${clipId})"/>
     ${renderBarDecor(theme, barCenterX, decorTopY, decorBottomY)}
     ${imageTag}
-    <text x="${LAYOUT.labelX}" y="${LAYOUT.relationY}" font-size="${LAYOUT.relationSize}" font-family="${fontFamily}" fill="#111827" stroke="#111827" stroke-width="6" paint-order="stroke fill">${relationText}</text>
+    <text x="${LAYOUT.labelX}" y="${LAYOUT.relationY}" font-size="${LAYOUT.relationSize}" font-family="${fontFamily}" fill="#111827" stroke="#111827" stroke-width="4" paint-order="stroke fill">${relationText}</text>
     <text x="${LAYOUT.labelX}" y="${LAYOUT.labelY}" font-size="84" font-family="${fontFamily}" fill="${theme.text}" stroke="${theme.textStroke}" stroke-width="8" paint-order="stroke fill" letter-spacing="1">${safeLabel}</text>
     <text x="${LAYOUT.labelX}" y="${LAYOUT.scoreY}" font-size="128" font-family="${fontFamily}" fill="${theme.text}" stroke="${theme.textStroke}" stroke-width="10" paint-order="stroke fill">${score}%</text>
   </g>`;
@@ -323,8 +323,8 @@ function renderAffinitySvg(entries, outputSize, extras) {
     LAYOUT.width - AFFINITY_TEXT.headerX * 2,
     48
   );
-  const headerStrokeWidth = Math.max(4, Math.round(headerFontSize * 0.08));
-  const statusStrokeWidth = Math.max(4, Math.round(AFFINITY_TEXT.statusSize * 0.08));
+  const headerStrokeWidth = Math.max(2, Math.round(headerFontSize * 0.05));
+  const statusStrokeWidth = Math.max(2, Math.round(AFFINITY_TEXT.statusSize * 0.05));
 
   return `<?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" width="${svgWidth}" height="${svgHeight}" viewBox="0 0 ${LAYOUT.width} ${LAYOUT.height}" role="img" aria-label="Affinity summary">
