@@ -10,6 +10,9 @@ const PRIMARY_FONT_NAME = "Numeric";
 const PRIMARY_FONT_PATH = path.join(__dirname, "fonts", "Numeric.ttf");
 const FALLBACK_FONT_NAME = "Concert One";
 const FALLBACK_FONT_PATH = path.join(__dirname, "fonts", "ConcertOne.ttf");
+const FONT_FILES = [PRIMARY_FONT_PATH, FALLBACK_FONT_PATH].filter((file) =>
+  fs.existsSync(file)
+);
 
 const ASSET_CACHE = new Map();
 
@@ -436,7 +439,14 @@ function renderStatusSvg(relationship, situation) {
 }
 
 function renderPngFromSvg(svg) {
-  const resvg = new Resvg(svg);
+  const fontOptions = FONT_FILES.length
+    ? {
+        fontFiles: FONT_FILES,
+        loadSystemFonts: false,
+        defaultFontFamily: FONT_NAME || "sans-serif"
+      }
+    : { loadSystemFonts: true };
+  const resvg = new Resvg(svg, { font: fontOptions });
   const pngData = resvg.render();
   return pngData.asPng();
 }
