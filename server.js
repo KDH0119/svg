@@ -1,6 +1,7 @@
 const fs = require("fs");
 const http = require("http");
 const path = require("path");
+const { Resvg } = require("@resvg/resvg-js");
 
 const PORT = process.env.PORT || 3000;
 const ASSET_DIR = path.join(__dirname, "img");
@@ -40,9 +41,9 @@ const CHARACTER_THEMES = {
 };
 
 const AFFINITY_CHARACTERS = [
-  { key: "y1", label: "이서아", image: "여동생", theme: "여동생" },
-  { key: "y2", label: "이서혜", image: "누나", theme: "누나" },
-  { key: "y3", label: "이서희", image: "엄마", theme: "엄마" }
+  { key: "y1", label: "이서아", image: "여동생", theme: "여동생", relationKey: "s1" },
+  { key: "y2", label: "이서혜", image: "누나", theme: "누나", relationKey: "s2" },
+  { key: "y3", label: "이서희", image: "엄마", theme: "엄마", relationKey: "m" }
 ];
 
 const LAYOUT = {
@@ -58,6 +59,8 @@ const LAYOUT = {
   imageSize: 480,
   labelX: 160,
   labelY: 760,
+  relationY: 660,
+  relationSize: 72,
   scoreY: 930
 };
 
@@ -78,6 +81,18 @@ const PROFILE_LAYOUT = {
   statusY: 756,
   statusSize: 96
 };
+
+const AFFINITY_TEXT = {
+  headerX: 60,
+  headerY: 70,
+  headerSize: 64,
+  statusX: 60,
+  statusY: 1030,
+  statusSize: 64
+};
+
+const PNG_WIDTH = 1216;
+const PNG_HEIGHT = 832;
 
 function clampNumber(value, min, max, fallback) {
   const num = Number(value);
@@ -112,11 +127,12 @@ function safeText(value, maxChars, fallback) {
   return escapeXml(sliced);
 }
 
-function buildImageUrl(baseUrl, filename) {
-  const encoded = encodeURIComponent(filename);
-  if (!baseUrl) return `/img/${encoded}`;
-  const trimmedBase = baseUrl.replace(/\/$/, "");
-  return `${trimmedBase}/img/${encoded}`;
+function fitFontSize(text, baseSize, maxWidth, minSize) {
+  const length = Array.from(text).length || 1;
+  const estimatedWidth = length * baseSize * 0.9;
+  if (estimatedWidth <= maxWidth) return baseSize;
+  const scaled = Math.floor(baseSize * (maxWidth / estimatedWidth));
+  return Math.max(minSize, scaled);
 }
 
 function loadAssetBase64(filePath) {
@@ -176,12 +192,19 @@ function readUserFields(params) {
   return { name, age, job };
 }
 
-function getBaseUrl(req) {
-  const protoHeader = req.headers["x-forwarded-proto"];
-  const hostHeader = req.headers["x-forwarded-host"] || req.headers.host;
-  const proto = (protoHeader || "http").split(",")[0].trim();
-  const host = (hostHeader || "localhost").split(",")[0].trim();
-  return `${proto}://${host}`;
+function buildAffinityExtras(params) {
+  const { name, age, job } = readUserFields(params);
+  return {
+    userName: safeText(name, 12, "유저"),
+    userAge: safeText(age, 3, "??"),
+    userJob: safeText(job, 10, "미상"),
+    status: safeText(params.get("status"), 20, "없음"),
+    relations: {
+      s1: safeText(params.get("s1"), 3, "미정"),
+      s2: safeText(params.get("s2"), 3, "미정"),
+      m: safeText(params.get("m"), 3, "미정")
+    }
+  };
 }
 
 function readAffinityParam(params, name, aliases) {
@@ -194,6 +217,13 @@ function readAffinityParam(params, name, aliases) {
     }
   }
   return 0;
+}
+
+function parsePathNumber(value) {
+  if (!value) return 0;
+  const num = Number(value);
+  if (Number.isNaN(num)) return 0;
+  return clampNumber(num, 0, 100, 0);
 }
 
 function renderDecorIcon(type, x, y, color) {
@@ -232,17 +262,16 @@ function renderBarDecor(theme, centerX, topY, bottomY) {
   `;
 }
 
-function renderAffinityPanel(entry, index, fontFamily, baseUrl) {
+function renderAffinityPanel(entry, index, fontFamily) {
   const score = Math.round(entry.score);
   const mood = getMoodLabel(score);
   const themeKey = entry.theme || entry.image || "여동생";
   const theme = CHARACTER_THEMES[themeKey] || CHARACTER_THEMES["여동생"];
   const imageName = entry.image || themeKey;
-  const imageFilename = `${imageName}-${mood}.png`;
-  const imageFile = path.join(ASSET_DIR, imageFilename);
-  const imageUrl = buildImageUrl(baseUrl, imageFilename);
-  const imageExists = fs.existsSync(imageFile);
+  const imageFile = path.join(ASSET_DIR, `${imageName}-${mood}.png`);
+  const imageBase64 = loadAssetBase64(imageFile);
   const safeLabel = escapeXml(entry.label || imageName);
+  const relationText = entry.relation || "";
   const columnX = index * LAYOUT.columnWidth;
   const barCenterX = LAYOUT.barX + LAYOUT.barWidth / 2;
   const decorTopY = LAYOUT.barY + 90;
@@ -252,8 +281,8 @@ function renderAffinityPanel(entry, index, fontFamily, baseUrl) {
   const fillY = LAYOUT.barY + (LAYOUT.barHeight - fillHeight);
   const clipId = `barClip-${index}`;
 
-  const imageTag = imageExists
-    ? `<image x="${LAYOUT.imageX}" y="${LAYOUT.imageY}" width="${LAYOUT.imageSize}" height="${LAYOUT.imageSize}" href="${imageUrl}" xlink:href="${imageUrl}" preserveAspectRatio="xMidYMin meet" filter="url(#panelShadow)"/>`
+  const imageTag = imageBase64
+    ? `<image x="${LAYOUT.imageX}" y="${LAYOUT.imageY}" width="${LAYOUT.imageSize}" height="${LAYOUT.imageSize}" href="data:image/png;base64,${imageBase64}" preserveAspectRatio="xMidYMin meet" filter="url(#panelShadow)"/>`
     : `<g>
         <rect x="${LAYOUT.imageX}" y="${LAYOUT.imageY}" width="${LAYOUT.imageSize}" height="${LAYOUT.imageSize}" rx="28" fill="#f3f4f6" stroke="#d1d5db" stroke-width="3"/>
         <text x="${LAYOUT.imageX + LAYOUT.imageSize / 2}" y="${LAYOUT.imageY + LAYOUT.imageSize / 2}" font-size="28" text-anchor="middle" font-family="${fontFamily}" fill="#9ca3af">Missing image</text>
@@ -270,20 +299,32 @@ function renderAffinityPanel(entry, index, fontFamily, baseUrl) {
     <rect x="${LAYOUT.barX}" y="${fillY}" width="${LAYOUT.barWidth}" height="${fillHeight}" fill="${theme.bar}" clip-path="url(#${clipId})"/>
     ${renderBarDecor(theme, barCenterX, decorTopY, decorBottomY)}
     ${imageTag}
+    <text x="${LAYOUT.labelX}" y="${LAYOUT.relationY}" font-size="${LAYOUT.relationSize}" font-family="${fontFamily}" fill="#111827" stroke="#111827" stroke-width="6" paint-order="stroke fill">${relationText}</text>
     <text x="${LAYOUT.labelX}" y="${LAYOUT.labelY}" font-size="84" font-family="${fontFamily}" fill="${theme.text}" stroke="${theme.textStroke}" stroke-width="8" paint-order="stroke fill" letter-spacing="1">${safeLabel}</text>
     <text x="${LAYOUT.labelX}" y="${LAYOUT.scoreY}" font-size="128" font-family="${fontFamily}" fill="${theme.text}" stroke="${theme.textStroke}" stroke-width="10" paint-order="stroke fill">${score}%</text>
   </g>`;
 }
 
-function renderAffinitySvg(entries, baseUrl) {
+function renderAffinitySvg(entries, outputSize, extras) {
   const fontStyle = getFontFaceStyle();
   const fontFamily = getFontFamily();
   const panels = entries
-    .map((entry, index) => renderAffinityPanel(entry, index, fontFamily, baseUrl))
+    .map((entry, index) => renderAffinityPanel(entry, index, fontFamily))
     .join("");
+  const svgWidth = outputSize ? outputSize.width : LAYOUT.width;
+  const svgHeight = outputSize ? outputSize.height : LAYOUT.height;
+  const headerText = `유저 이름: ${extras.userName} | 유저 나이: ${extras.userAge} | 유저 직업: ${extras.userJob}`;
+  const headerFontSize = fitFontSize(
+    headerText,
+    AFFINITY_TEXT.headerSize,
+    LAYOUT.width - AFFINITY_TEXT.headerX * 2,
+    48
+  );
+  const headerStrokeWidth = Math.max(4, Math.round(headerFontSize * 0.08));
+  const statusStrokeWidth = Math.max(4, Math.round(AFFINITY_TEXT.statusSize * 0.08));
 
   return `<?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="${LAYOUT.width}" height="${LAYOUT.height}" viewBox="0 0 ${LAYOUT.width} ${LAYOUT.height}" role="img" aria-label="Affinity summary">
+<svg xmlns="http://www.w3.org/2000/svg" width="${svgWidth}" height="${svgHeight}" viewBox="0 0 ${LAYOUT.width} ${LAYOUT.height}" role="img" aria-label="Affinity summary">
   <defs>
     ${fontStyle}
     <filter id="panelShadow" x="-20%" y="-20%" width="140%" height="140%">
@@ -291,16 +332,16 @@ function renderAffinitySvg(entries, baseUrl) {
     </filter>
   </defs>
   <rect width="${LAYOUT.width}" height="${LAYOUT.height}" fill="#ffffff"/>
+  <text x="${AFFINITY_TEXT.headerX}" y="${AFFINITY_TEXT.headerY}" font-size="${headerFontSize}" font-family="${fontFamily}" fill="#111827" stroke="#111827" stroke-width="${headerStrokeWidth}" paint-order="stroke fill">${headerText}</text>
   ${panels}
+  <text x="${AFFINITY_TEXT.statusX}" y="${AFFINITY_TEXT.statusY}" font-size="${AFFINITY_TEXT.statusSize}" font-family="${fontFamily}" fill="#111827" stroke="#111827" stroke-width="${statusStrokeWidth}" paint-order="stroke fill">현재 상황 : ${extras.status}</text>
 </svg>`;
 }
 
-function renderProfileEntry(entry, index, fontFamily, baseUrl) {
+function renderProfileEntry(entry, index, fontFamily) {
   const columnX = index * PROFILE_LAYOUT.columnWidth;
-  const imageFilename = `${entry.name}-무표정.png`;
-  const imageFile = path.join(ASSET_DIR, imageFilename);
-  const imageUrl = buildImageUrl(baseUrl, imageFilename);
-  const imageExists = fs.existsSync(imageFile);
+  const imageFile = path.join(ASSET_DIR, `${entry.name}-무표정.png`);
+  const imageBase64 = loadAssetBase64(imageFile);
   const relationText = safeText(entry.relation, 3, "미정");
   const imageX = PROFILE_LAYOUT.imageX;
   const imageY = PROFILE_LAYOUT.imageY;
@@ -310,8 +351,8 @@ function renderProfileEntry(entry, index, fontFamily, baseUrl) {
     Math.round(PROFILE_LAYOUT.imageSize / 2) +
     PROFILE_LAYOUT.relationOffsetY;
 
-  const imageTag = imageExists
-    ? `<image x="${imageX}" y="${imageY}" width="${PROFILE_LAYOUT.imageSize}" height="${PROFILE_LAYOUT.imageSize}" href="${imageUrl}" xlink:href="${imageUrl}" preserveAspectRatio="xMidYMin meet"/>`
+  const imageTag = imageBase64
+    ? `<image x="${imageX}" y="${imageY}" width="${PROFILE_LAYOUT.imageSize}" height="${PROFILE_LAYOUT.imageSize}" href="data:image/png;base64,${imageBase64}" preserveAspectRatio="xMidYMin meet"/>`
     : `<g>
         <rect x="${imageX}" y="${imageY}" width="${PROFILE_LAYOUT.imageSize}" height="${PROFILE_LAYOUT.imageSize}" rx="24" fill="#f3f4f6" stroke="#d1d5db" stroke-width="3"/>
         <text x="${imageX + PROFILE_LAYOUT.imageSize / 2}" y="${imageY + PROFILE_LAYOUT.imageSize / 2}" font-size="24" text-anchor="middle" font-family="${fontFamily}" fill="#9ca3af">Missing image</text>
@@ -324,7 +365,7 @@ function renderProfileEntry(entry, index, fontFamily, baseUrl) {
   </g>`;
 }
 
-function renderProfileSvg(params, baseUrl) {
+function renderProfileSvg(params, outputSize) {
   const fontStyle = getFontFaceStyle();
   const fontFamily = getFontFamily();
   const { name, age, job } = readUserFields(params);
@@ -338,17 +379,25 @@ function renderProfileSvg(params, baseUrl) {
     { name: "엄마", relation: params.get("m") }
   ];
   const headerText = `유저 이름: ${userName} | 유저 나이: ${userAge} | 유저 직업: ${userJob}`;
+  const headerFontSize = fitFontSize(
+    headerText,
+    PROFILE_LAYOUT.headerSize,
+    PROFILE_LAYOUT.width - PROFILE_LAYOUT.headerX * 2,
+    60
+  );
   const panels = entries
-    .map((entry, index) => renderProfileEntry(entry, index, fontFamily, baseUrl))
+    .map((entry, index) => renderProfileEntry(entry, index, fontFamily))
     .join("");
+  const svgWidth = outputSize ? outputSize.width : PROFILE_LAYOUT.width;
+  const svgHeight = outputSize ? outputSize.height : PROFILE_LAYOUT.height;
 
   return `<?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="${PROFILE_LAYOUT.width}" height="${PROFILE_LAYOUT.height}" viewBox="0 0 ${PROFILE_LAYOUT.width} ${PROFILE_LAYOUT.height}" role="img" aria-label="${headerText}">
+<svg xmlns="http://www.w3.org/2000/svg" width="${svgWidth}" height="${svgHeight}" viewBox="0 0 ${PROFILE_LAYOUT.width} ${PROFILE_LAYOUT.height}" role="img" aria-label="${headerText}">
   <defs>
     ${fontStyle}
   </defs>
   <rect width="${PROFILE_LAYOUT.width}" height="${PROFILE_LAYOUT.height}" fill="#ffffff"/>
-  <text x="${PROFILE_LAYOUT.headerX}" y="${PROFILE_LAYOUT.headerY}" font-size="${PROFILE_LAYOUT.headerSize}" font-family="${fontFamily}" fill="#111827">${headerText}</text>
+  <text x="${PROFILE_LAYOUT.headerX}" y="${PROFILE_LAYOUT.headerY}" font-size="${headerFontSize}" font-family="${fontFamily}" fill="#111827">${headerText}</text>
   ${panels}
   <text x="${PROFILE_LAYOUT.statusX}" y="${PROFILE_LAYOUT.statusY}" font-size="${PROFILE_LAYOUT.statusSize}" font-family="${fontFamily}" fill="#111827">현재 상황 : ${statusText}</text>
 </svg>`;
@@ -386,6 +435,12 @@ function renderStatusSvg(relationship, situation) {
 </svg>`;
 }
 
+function renderPngFromSvg(svg) {
+  const resvg = new Resvg(svg);
+  const pngData = resvg.render();
+  return pngData.asPng();
+}
+
 function writeSvg(res, svg) {
   res.writeHead(200, {
     "Content-Type": "image/svg+xml; charset=utf-8",
@@ -393,6 +448,15 @@ function writeSvg(res, svg) {
     "Access-Control-Allow-Origin": "*"
   });
   res.end(svg);
+}
+
+function writePng(res, pngBuffer) {
+  res.writeHead(200, {
+    "Content-Type": "image/png",
+    "Cache-Control": "no-store",
+    "Access-Control-Allow-Origin": "*"
+  });
+  res.end(pngBuffer);
 }
 
 function writeText(res, status, text) {
@@ -412,52 +476,116 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  if (url.pathname.startsWith("/img/")) {
-    const relativePath = decodeURIComponent(url.pathname.slice(5));
-    if (!relativePath || relativePath.includes("..") || relativePath.includes("/") || relativePath.includes("\\")) {
-      writeText(res, 400, "Bad request");
+  const affinityPathMatch = url.pathname.match(
+    /^\/api\/affinity\/(\d+(?:\.\d+)?)\/(\d+(?:\.\d+)?)\/(\d+(?:\.\d+)?)(?:\.(png|svg))?$/
+  );
+  if (affinityPathMatch) {
+    const format = (affinityPathMatch[4] || "png").toLowerCase();
+    const extras = buildAffinityExtras(url.searchParams);
+    const scores = [
+      parsePathNumber(affinityPathMatch[1]),
+      parsePathNumber(affinityPathMatch[2]),
+      parsePathNumber(affinityPathMatch[3])
+    ];
+    const entries = AFFINITY_CHARACTERS.map((character, index) => ({
+      label: character.label,
+      image: character.image,
+      theme: character.theme,
+      relation: extras.relations[character.relationKey],
+      score: scores[index] ?? 0
+    }));
+    const svg = renderAffinitySvg(
+      entries,
+      format === "png" ? { width: PNG_WIDTH, height: PNG_HEIGHT } : null,
+      extras
+    );
+    if (format === "svg") {
+      writeSvg(res, svg);
       return;
     }
-
-    const filePath = path.join(ASSET_DIR, relativePath);
-    const resolvedPath = path.resolve(filePath);
-    if (!resolvedPath.toLowerCase().startsWith(ASSET_DIR.toLowerCase())) {
-      writeText(res, 400, "Bad request");
-      return;
+    try {
+      const pngBuffer = renderPngFromSvg(svg);
+      writePng(res, pngBuffer);
+    } catch (error) {
+      writeText(res, 500, "PNG render failed");
     }
-
-    fs.readFile(resolvedPath, (err, data) => {
-      if (err) {
-        writeText(res, 404, "Not found");
-        return;
-      }
-      res.writeHead(200, {
-        "Content-Type": "image/png",
-        "Cache-Control": "public, max-age=86400, immutable",
-        "Access-Control-Allow-Origin": "*"
-      });
-      res.end(data);
-    });
     return;
   }
 
-  if (url.pathname === "/api/affinity") {
-    const baseUrl = getBaseUrl(req);
+  const profilePathMatch = url.pathname.match(
+    /^\/api\/profile\/([^/]+)\/([^/]+)\/([^/]+)\/([^/]+)\/([^/]+)\/([^/]+)\/([^/]+?)(?:\.(png|svg))?$/
+  );
+  if (profilePathMatch) {
+    const format = (profilePathMatch[8] || "png").toLowerCase();
+    const params = new URLSearchParams();
+    params.append("u", decodeURIComponent(profilePathMatch[1]));
+    params.append("u", decodeURIComponent(profilePathMatch[2]));
+    params.append("u", decodeURIComponent(profilePathMatch[3]));
+    params.set("s1", decodeURIComponent(profilePathMatch[4]));
+    params.set("s2", decodeURIComponent(profilePathMatch[5]));
+    params.set("m", decodeURIComponent(profilePathMatch[6]));
+    params.set("status", decodeURIComponent(profilePathMatch[7]));
+    const svg = renderProfileSvg(
+      params,
+      format === "png" ? { width: PNG_WIDTH, height: PNG_HEIGHT } : null
+    );
+    if (format === "svg") {
+      writeSvg(res, svg);
+      return;
+    }
+    try {
+      const pngBuffer = renderPngFromSvg(svg);
+      writePng(res, pngBuffer);
+    } catch (error) {
+      writeText(res, 500, "PNG render failed");
+    }
+    return;
+  }
+
+  if (url.pathname === "/api/affinity" || url.pathname === "/api/affinity.png") {
+    const format = (url.searchParams.get("format") || "png").toLowerCase();
+    const extras = buildAffinityExtras(url.searchParams);
     const entries = AFFINITY_CHARACTERS.map((character) => ({
       label: character.label,
       image: character.image,
       theme: character.theme,
+      relation: extras.relations[character.relationKey],
       score: readAffinityParam(url.searchParams, character.key, character.aliases)
     }));
-    const svg = renderAffinitySvg(entries, baseUrl);
-    writeSvg(res, svg);
+    const svg = renderAffinitySvg(
+      entries,
+      format === "png" ? { width: PNG_WIDTH, height: PNG_HEIGHT } : null,
+      extras
+    );
+    if (format === "svg") {
+      writeSvg(res, svg);
+      return;
+    }
+    try {
+      const pngBuffer = renderPngFromSvg(svg);
+      writePng(res, pngBuffer);
+    } catch (error) {
+      writeText(res, 500, "PNG render failed");
+    }
     return;
   }
 
-  if (url.pathname === "/api/profile") {
-    const baseUrl = getBaseUrl(req);
-    const svg = renderProfileSvg(url.searchParams, baseUrl);
-    writeSvg(res, svg);
+  if (url.pathname === "/api/profile" || url.pathname === "/api/profile.png") {
+    const format = (url.searchParams.get("format") || "png").toLowerCase();
+    const svg = renderProfileSvg(
+      url.searchParams,
+      format === "png" ? { width: PNG_WIDTH, height: PNG_HEIGHT } : null
+    );
+    if (format === "svg") {
+      writeSvg(res, svg);
+      return;
+    }
+    try {
+      const pngBuffer = renderPngFromSvg(svg);
+      writePng(res, pngBuffer);
+    } catch (error) {
+      writeText(res, 500, "PNG render failed");
+    }
     return;
   }
 
